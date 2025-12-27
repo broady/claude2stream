@@ -6,7 +6,21 @@ A streaming web UI is served  on /ui that allows you to view sessions as they ha
 
 <img alt="Screenshot" src=".github/screen.png" />
 
+## Run with Docker
+
+```bash
+docker run --rm \
+  -p 8214:8214 \
+  -u $(id -u):$(id -g) \
+  -v ~/.claude:/data:ro \
+  ghcr.io/broady/claude2stream:latest \
+  -dir /data
+```
+Open http://localhost:8214/ui/ to view conversations.
+
 ## Installation
+
+### Pre-built binaries
 
 Download the latest binary for your platform from [GitHub Releases](https://github.com/broady/claude2stream/releases).
 
@@ -52,7 +66,7 @@ task dev
 
 The Vite dev server runs on port 3000 and proxies API requests to the Go backend on port 8214.
 
-## Building
+### Building
 
 ```bash
 task build          # Build frontend + binary
@@ -64,3 +78,7 @@ task release:snapshot  # Test goreleaser locally
 
 - **Go backend**: Watches `~/.claude` for JSONL conversation files, exposes them as [durable streams](https://github.com/ahimsalabs/durable-streams-go)
 - **SolidJS frontend**: Real-time conversation viewer with TanStack Router, served from `/ui/`
+
+## License
+
+MIT

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -274,6 +275,13 @@ func (s *ClaudeStorage) Read(ctx context.Context, streamID string, offset durabl
 
 		if bytesRead+len(line) > limit && len(messages) > 0 {
 			break
+		}
+
+		// Validate JSON before including - skip malformed lines
+		// (can happen if file is being written while we read)
+		if !json.Valid(line) {
+			currentOffset += lineLen
+			continue
 		}
 
 		// For JSON mode, store raw JSON object (handler will format as array)

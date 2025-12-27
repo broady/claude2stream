@@ -17,7 +17,7 @@ import (
 var webUI embed.FS
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
+	addr := flag.String("addr", ":8214", "listen address")
 	claudeDir := flag.String("dir", "", "claude directory (default: ~/.claude)")
 	dev := flag.Bool("dev", false, "enable CORS for development")
 	flag.Parse()

@@ -10,7 +10,7 @@ export default defineConfig({
     proxy: {
       // Proxy API requests to Go backend during dev
       '^/(_history|[0-9a-f-]{36})': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8214',
         changeOrigin: true,
       },
     },

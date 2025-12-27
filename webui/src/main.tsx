@@ -33,8 +33,15 @@ interface ContentBlock {
   name?: string
   input?: Record<string, unknown>
   tool_use_id?: string
-  content?: string
+  content?: string | Array<{ type?: string; text?: string }>
   is_error?: boolean
+}
+
+interface TokenUsage {
+  input_tokens?: number
+  output_tokens?: number
+  cache_creation_input_tokens?: number
+  cache_read_input_tokens?: number
 }
 
 interface ConversationMessage {
@@ -43,6 +50,8 @@ interface ConversationMessage {
   message?: {
     role: string
     content: string | ContentBlock[]
+    model?: string
+    usage?: TokenUsage
   }
   timestamp?: string
 }
@@ -119,7 +128,16 @@ function ToolUseBlock(props: { block: ContentBlock }) {
 function ToolResultBlock(props: { block: ContentBlock }) {
   const [expanded, setExpanded] = createSignal(false)
   const isError = () => props.block.is_error
-  const content = () => props.block.content || ""
+  const content = () => {
+    const c = props.block.content
+    if (!c) return ""
+    if (typeof c === "string") return c
+    // Array of content blocks (e.g., from MCP tools)
+    if (Array.isArray(c)) {
+      return c.map((item: { type?: string; text?: string }) => item.text || "").join("\n")
+    }
+    return String(c)
+  }
   const hasContent = () => content().length > 0
   const preview = () => content().slice(0, 60).replace(/\n/g, " ") + (content().length > 60 ? "..." : "")
 
@@ -302,21 +320,24 @@ function SessionList() {
     abortController?.abort()
   })
 
-  const formatTime = (ts: number) => new Date(ts).toLocaleString()
+  const formatRelativeTime = (ts: number) => {
+    const seconds = Math.floor((Date.now() - ts) / 1000)
+    if (seconds < 60) return "just now"
+    const minutes = Math.floor(seconds / 60)
+    if (minutes < 60) return `${minutes}m ago`
+    const hours = Math.floor(minutes / 60)
+    if (hours < 24) return `${hours}h ago`
+    const days = Math.floor(hours / 24)
+    if (days < 7) return `${days}d ago`
+    return new Date(ts).toLocaleDateString()
+  }
+  const folderName = (project?: string) => project?.split("/").pop() || ""
   const truncate = (s: string, len: number) => s.length <= len ? s : s.slice(0, len) + "..."
 
   return (
     <aside class="w-80 border-r overflow-y-auto bg-gray-50 dark:bg-gray-900 flex flex-col">
       <div class="p-2 border-b bg-white dark:bg-gray-800 sticky top-0">
-        <div class="flex items-center justify-between">
-          <h2 class="font-medium text-sm text-gray-600">Recent Sessions</h2>
-          <span class="text-xs">
-            <Show when={connectionStatus() === "connected"}>
-              <span class="text-green-600">●</span>
-            </Show>
-            {" "}{sessions().length}
-          </span>
-        </div>
+        <h2 class="font-medium text-sm text-gray-600">Recent Sessions</h2>
       </div>
       <div class="divide-y flex-1 overflow-y-auto">
         <For each={sessions()}>
@@ -327,8 +348,13 @@ function SessionList() {
               }`}
               onClick={() => navigate({ to: "/$sessionId", params: { sessionId: session.sessionId } })}
             >
-              <div class="text-sm font-medium truncate">{truncate(session.display, 60)}</div>
-              <div class="text-xs text-gray-500 mt-1">{formatTime(session.timestamp)}</div>
+              <div class="flex items-center gap-2 mb-1">
+                <Show when={folderName(session.project)}>
+                  <span class="text-xs px-1.5 py-0.5 bg-gray-200 text-gray-600 rounded font-mono">{folderName(session.project)}</span>
+                </Show>
+                <span class="text-xs text-gray-400 ml-auto">{formatRelativeTime(session.timestamp)}</span>
+              </div>
+              <div class="text-sm truncate">{truncate(session.display, 60)}</div>
             </button>
           )}
         </For>
@@ -345,6 +371,12 @@ function IndexPage() {
   )
 }
 
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M"
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "k"
+  return String(n)
+}
+
 function SessionPage() {
   // Route.useParams() returns an accessor function in Solid
   const params = sessionRoute.useParams()
@@ -357,6 +389,50 @@ function SessionPage() {
 
   const [isAttachedToBottom, setIsAttachedToBottom] = createSignal(true)
   const messages = createMemo(() => getMessagesForSession(sessionId()))
+
+  // Check if message is a tool result (not human-initiated)
+  function isToolResult(msg: ConversationMessage): boolean {
+    const content = msg.message?.content
+    if (!content || typeof content === "string") return false
+    return content.some(block => block.type === "tool_result")
+  }
+
+  // Compute stats from messages
+  const stats = createMemo(() => {
+    const msgs = messages()
+    let model: string | undefined
+    let lastUsage: TokenUsage | undefined
+    let humanCount = 0
+    let assistantCount = 0
+
+    for (const msg of msgs) {
+      if (msg.type === "user" && !isToolResult(msg)) humanCount++
+      if (msg.type === "assistant") {
+        assistantCount++
+        if (msg.message?.model) model = msg.message.model
+        if (msg.message?.usage) lastUsage = msg.message.usage
+      }
+    }
+
+    // Current context = input_tokens + cache_creation + cache_read (from last message)
+    const contextTokens = lastUsage
+      ? (lastUsage.input_tokens ?? 0) +
+        (lastUsage.cache_creation_input_tokens ?? 0) +
+        (lastUsage.cache_read_input_tokens ?? 0)
+      : 0
+
+    return { model, contextTokens, humanCount, assistantCount }
+  })
+
+  const shortModel = () => {
+    const m = stats().model
+    if (!m) return undefined
+    // "claude-opus-4-5-20251101" -> "opus-4.5"
+    // "claude-haiku-4-5-20251001" -> "haiku-4.5"
+    const match = m.match(/claude-(\w+)-(\d+)-(\d+)/)
+    if (match) return `${match[1]}-${match[2]}.${match[3]}`
+    return m
+  }
 
   // Check if scrolled near bottom (within 100px threshold)
   function checkIfAtBottom() {
@@ -471,9 +547,22 @@ function SessionPage() {
   }
 
   return (
-    <div class="flex-1 relative overflow-hidden">
-      <main ref={scrollContainer} onScroll={handleScroll} class="h-full overflow-y-auto p-2 space-y-1">
-        <div class="text-xs text-gray-400 font-mono px-2 py-1">{sessionId()}</div>
+    <div class="flex-1 relative overflow-hidden flex flex-col">
+      <div class="px-3 py-2 border-b bg-white dark:bg-gray-800 text-xs">
+        <div class="font-mono text-gray-500 truncate">{sessionId()}</div>
+        <div class="flex items-center gap-3 mt-1">
+          <Show when={shortModel()}>
+            <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">{shortModel()}</span>
+          </Show>
+          <Show when={stats().humanCount > 0 || stats().assistantCount > 0}>
+            <span class="text-gray-400">{stats().humanCount} human, {stats().assistantCount} assistant</span>
+          </Show>
+          <Show when={stats().contextTokens > 0}>
+            <span class="text-gray-400">{formatTokens(stats().contextTokens)} ctx</span>
+          </Show>
+        </div>
+      </div>
+      <main ref={scrollContainer} onScroll={handleScroll} class="flex-1 overflow-y-auto p-2 space-y-1">
         <For each={messages()}>
           {(msg) => (
             <Show when={msg.type === "user" || msg.type === "assistant"}>

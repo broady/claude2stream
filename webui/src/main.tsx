@@ -72,6 +72,24 @@ function formatToolInput(input: Record<string, unknown>): string {
   return JSON.stringify(input, null, 2)
 }
 
+async function copyToClipboard(text: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  if (typeof document === "undefined") return
+  const textarea = document.createElement("textarea")
+  textarea.value = text
+  textarea.setAttribute("readonly", "true")
+  textarea.style.position = "absolute"
+  textarea.style.left = "-9999px"
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand("copy")
+  document.body.removeChild(textarea)
+}
+
 // ============================================================================
 // Block Components
 // ============================================================================
@@ -257,6 +275,8 @@ function SessionList() {
   const params = useParams({ strict: false })
 
   const [connectionStatus, setConnectionStatus] = createSignal<"connecting" | "connected" | "error">("connecting")
+  const [searchQuery, setSearchQuery] = createSignal("")
+  const [activeProjects, setActiveProjects] = createSignal<Set<string>>(new Set())
   let streamResponse: StreamResponse | null = null
   let abortController: AbortController | null = null
 
@@ -334,13 +354,92 @@ function SessionList() {
   const folderName = (project?: string) => project?.split("/").pop() || ""
   const truncate = (s: string, len: number) => s.length <= len ? s : s.slice(0, len) + "..."
 
+  const projectGroups = createMemo(() => {
+    const counts = new Map<string, number>()
+    for (const session of sessions()) {
+      const name = folderName(session.project) || "unknown"
+      counts.set(name, (counts.get(name) || 0) + 1)
+    }
+    return [...counts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  })
+
+  const filteredSessions = createMemo(() => {
+    const query = searchQuery().trim().toLowerCase()
+    const projectFilter = activeProjects()
+    return sessions().filter((session) => {
+      const project = folderName(session.project)
+      const matchesProject = projectFilter.size === 0 || projectFilter.has(project || "unknown")
+      if (!matchesProject) return false
+
+      if (!query) return true
+      return (
+        session.display.toLowerCase().includes(query) ||
+        (session.project?.toLowerCase().includes(query) ?? false) ||
+        session.sessionId.toLowerCase().includes(query)
+      )
+    })
+  })
+
+  const toggleProject = (project: string) => {
+    setActiveProjects((prev) => {
+      const next = new Set(prev)
+      if (next.has(project)) {
+        next.delete(project)
+      } else {
+        next.add(project)
+      }
+      return next
+    })
+  }
+
+  const clearProjects = () => setActiveProjects(new Set())
+
   return (
     <aside class="w-80 border-r overflow-y-auto bg-gray-50 dark:bg-gray-900 flex flex-col">
-      <div class="p-2 border-b bg-white dark:bg-gray-800 sticky top-0">
-        <h2 class="font-medium text-sm text-gray-600">Recent Sessions</h2>
+      <div class="p-2 border-b bg-white dark:bg-gray-800 sticky top-0 space-y-2">
+        <div class="flex items-center justify-between">
+          <h2 class="font-medium text-sm text-gray-600 dark:text-gray-300">Recent Sessions</h2>
+          <span class="text-xs text-gray-400 dark:text-gray-500">{filteredSessions().length}</span>
+        </div>
+        <input
+          value={searchQuery()}
+          onInput={(e) => setSearchQuery(e.currentTarget.value)}
+          placeholder="Search sessions"
+          class="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 text-xs text-gray-800 dark:text-gray-200 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800"
+        />
+        <div class="flex flex-wrap gap-1">
+          <button
+            class={`text-[10px] uppercase tracking-wide rounded-full px-2 py-0.5 border ${
+              activeProjects().size === 0
+                ? "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-200"
+                : "bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+            }`}
+            onClick={clearProjects}
+          >
+            all
+          </button>
+          <For each={projectGroups()}>
+            {(project) => (
+              <button
+                class={`text-[10px] rounded-full px-2 py-0.5 border flex items-center gap-1 ${
+                  activeProjects().has(project.name)
+                    ? "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-200"
+                    : "bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+                }`}
+                onClick={() => toggleProject(project.name)}
+                title={project.name}
+              >
+                <span class="truncate max-w-[110px]">{project.name}</span>
+                <span class="text-[9px] opacity-70">{project.count}</span>
+              </button>
+            )}
+          </For>
+        </div>
       </div>
-      <div class="divide-y flex-1 overflow-y-auto">
-        <For each={sessions()}>
+      <div class="divide-y dark:divide-gray-800 flex-1 overflow-y-auto">
+        <For each={filteredSessions()}>
           {(session) => (
             <button
               class={`w-full text-left p-3 hover:bg-gray-100 transition-colors ${
@@ -389,6 +488,7 @@ function SessionPage() {
 
   const [isAttachedToBottom, setIsAttachedToBottom] = createSignal(true)
   const messages = createMemo(() => getMessagesForSession(sessionId()))
+  const [copyFeedback, setCopyFeedback] = createSignal<"idle" | "copied">("idle")
 
   // Check if message is a tool result (not human-initiated)
   function isToolResult(msg: ConversationMessage): boolean {
@@ -549,17 +649,39 @@ function SessionPage() {
   return (
     <div class="flex-1 relative overflow-hidden flex flex-col">
       <div class="px-3 py-2 border-b bg-white dark:bg-gray-800 text-xs">
-        <div class="font-mono text-gray-500 truncate">{sessionId()}</div>
-        <div class="flex items-center gap-3 mt-1">
-          <Show when={shortModel()}>
-            <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">{shortModel()}</span>
-          </Show>
-          <Show when={stats().humanCount > 0 || stats().assistantCount > 0}>
-            <span class="text-gray-400">{stats().humanCount} human, {stats().assistantCount} assistant</span>
-          </Show>
-          <Show when={stats().contextTokens > 0}>
-            <span class="text-gray-400">{formatTokens(stats().contextTokens)} ctx</span>
-          </Show>
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <div class="font-mono text-gray-500 dark:text-gray-400 truncate">{sessionId()}</div>
+            <div class="flex items-center gap-3 mt-1">
+              <Show when={shortModel()}>
+                <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 rounded">{shortModel()}</span>
+              </Show>
+              <Show when={stats().humanCount > 0 || stats().assistantCount > 0}>
+                <span class="text-gray-400 dark:text-gray-500">{stats().humanCount} human, {stats().assistantCount} assistant</span>
+              </Show>
+              <Show when={stats().contextTokens > 0}>
+                <span class="text-gray-400 dark:text-gray-500">{formatTokens(stats().contextTokens)} ctx</span>
+              </Show>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                await copyToClipboard(`claude -r \"${sessionId()}\"`)
+                setCopyFeedback("copied")
+                setTimeout(() => setCopyFeedback("idle"), 1600)
+              }}
+              class="text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              {copyFeedback() === "copied" ? "copied" : "copy resume"}
+            </button>
+            <button
+              onClick={() => copyToClipboard(sessionId())}
+              class="text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              copy id
+            </button>
+          </div>
         </div>
       </div>
       <main ref={scrollContainer} onScroll={handleScroll} class="flex-1 overflow-y-auto p-2 space-y-1">

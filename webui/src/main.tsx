@@ -2,6 +2,7 @@ import { render } from "solid-js/web"
 import { createSignal, createEffect, createMemo, For, Show, Switch, Match, onMount, onCleanup } from "solid-js"
 import { RouterProvider, createRouter, createRoute, createRootRoute, Outlet, useNavigate, useParams } from "@tanstack/solid-router"
 import { stream, type StreamResponse } from "@durable-streams/client"
+import { calculateCostForUsageTotals, type UsageTotals } from "./pricing"
 import "./styles.css"
 
 // In prod: served from same origin. In dev: Vite proxies to Go backend
@@ -42,6 +43,14 @@ interface TokenUsage {
   output_tokens?: number
   cache_creation_input_tokens?: number
   cache_read_input_tokens?: number
+}
+
+interface SessionTotals {
+  inputTokens: number
+  outputTokens: number
+  cacheCreationTokens: number
+  cacheReadTokens: number
+  totalCost: number
 }
 
 interface ConversationMessage {
@@ -189,15 +198,28 @@ function ContentBlockRenderer(props: { block: ContentBlock }) {
 
 const [sessionMap, setSessionMap] = createSignal<Map<string, Session>>(new Map())
 const [messageStore, setMessageStore] = createSignal<Map<string, ConversationMessage[]>>(new Map())
+const [sessionTotalsMap, setSessionTotalsMap] = createSignal<Map<string, SessionTotals>>(new Map())
 
 function getMessagesForSession(sessionId: string): ConversationMessage[] {
   return messageStore().get(sessionId) ?? []
+}
+
+function getSessionTotals(sessionId: string): SessionTotals | undefined {
+  return sessionTotalsMap().get(sessionId)
 }
 
 function setMessagesForSession(sessionId: string, messages: ConversationMessage[]) {
   setMessageStore(prev => {
     const updated = new Map(prev)
     updated.set(sessionId, messages)
+    return updated
+  })
+}
+
+function setSessionTotals(sessionId: string, totals: SessionTotals) {
+  setSessionTotalsMap(prev => {
+    const updated = new Map(prev)
+    updated.set(sessionId, totals)
     return updated
   })
 }
@@ -355,6 +377,14 @@ function SessionList() {
                 <span class="text-xs text-gray-400 ml-auto">{formatRelativeTime(session.timestamp)}</span>
               </div>
               <div class="text-sm truncate">{truncate(session.display, 60)}</div>
+              <Show when={getSessionTotals(session.sessionId)}>
+                {(totals) => (
+                  <div class="text-xs text-gray-400 mt-1 flex items-center gap-2">
+                    <span>{formatTokens(sumSessionTokens(totals()))} tokens</span>
+                    <span>{formatUsd(totals().totalCost)}</span>
+                  </div>
+                )}
+              </Show>
             </button>
           )}
         </For>
@@ -377,6 +407,16 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
+function formatUsd(amount: number): string {
+  if (!amount || amount <= 0) return "$0.00"
+  if (amount < 0.01) return `$${amount.toFixed(4)}`
+  return `$${amount.toFixed(2)}`
+}
+
+function sumSessionTokens(totals: SessionTotals): number {
+  return totals.inputTokens + totals.outputTokens + totals.cacheCreationTokens + totals.cacheReadTokens
+}
+
 function SessionPage() {
   // Route.useParams() returns an accessor function in Solid
   const params = sessionRoute.useParams()
@@ -389,6 +429,7 @@ function SessionPage() {
 
   const [isAttachedToBottom, setIsAttachedToBottom] = createSignal(true)
   const messages = createMemo(() => getMessagesForSession(sessionId()))
+  const [sessionTotals, setSessionTotalsLocal] = createSignal<SessionTotals | null>(null)
 
   // Check if message is a tool result (not human-initiated)
   function isToolResult(msg: ConversationMessage): boolean {
@@ -424,6 +465,77 @@ function SessionPage() {
     return { model, contextTokens, humanCount, assistantCount }
   })
 
+  createEffect(() => {
+    const msgs = messages()
+    const currentId = sessionId()
+    if (!currentId) return
+
+    const totalsByModel = new Map<string, UsageTotals>()
+    let inputTokens = 0
+    let outputTokens = 0
+    let cacheCreationTokens = 0
+    let cacheReadTokens = 0
+
+    for (const msg of msgs) {
+      const usage = msg.message?.usage
+      if (!usage) continue
+
+      inputTokens += usage.input_tokens ?? 0
+      outputTokens += usage.output_tokens ?? 0
+      cacheCreationTokens += usage.cache_creation_input_tokens ?? 0
+      cacheReadTokens += usage.cache_read_input_tokens ?? 0
+
+      const model = msg.message?.model
+      if (!model) continue
+
+      const existing = totalsByModel.get(model) ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      }
+
+      existing.inputTokens += usage.input_tokens ?? 0
+      existing.outputTokens += usage.output_tokens ?? 0
+      existing.cacheCreationTokens += usage.cache_creation_input_tokens ?? 0
+      existing.cacheReadTokens += usage.cache_read_input_tokens ?? 0
+      totalsByModel.set(model, existing)
+    }
+
+    const baseTotals: SessionTotals = {
+      inputTokens,
+      outputTokens,
+      cacheCreationTokens,
+      cacheReadTokens,
+      totalCost: 0,
+    }
+
+    if (totalsByModel.size === 0) {
+      setSessionTotalsLocal(baseTotals)
+      setSessionTotals(currentId, baseTotals)
+      return
+    }
+
+    let cancelled = false
+
+    ;(async () => {
+      const totalCost = await calculateCostForUsageTotals(totalsByModel)
+      if (cancelled) return
+
+      const totals: SessionTotals = {
+        ...baseTotals,
+        totalCost,
+      }
+
+      setSessionTotalsLocal(totals)
+      setSessionTotals(currentId, totals)
+    })()
+
+    onCleanup(() => {
+      cancelled = true
+    })
+  })
+
   const shortModel = () => {
     const m = stats().model
     if (!m) return undefined
@@ -432,6 +544,12 @@ function SessionPage() {
     const match = m.match(/claude-(\w+)-(\d+)-(\d+)/)
     if (match) return `${match[1]}-${match[2]}.${match[3]}`
     return m
+  }
+
+  const totalTokens = () => {
+    const totals = sessionTotals()
+    if (!totals) return 0
+    return totals.inputTokens + totals.outputTokens + totals.cacheCreationTokens + totals.cacheReadTokens
   }
 
   // Check if scrolled near bottom (within 100px threshold)
@@ -559,6 +677,10 @@ function SessionPage() {
           </Show>
           <Show when={stats().contextTokens > 0}>
             <span class="text-gray-400">{formatTokens(stats().contextTokens)} ctx</span>
+          </Show>
+          <Show when={sessionTotals()}>
+            <span class="text-gray-400">{formatTokens(totalTokens())} tokens</span>
+            <span class="text-gray-400">{formatUsd(sessionTotals()!.totalCost)}</span>
           </Show>
         </div>
       </div>

@@ -416,7 +416,7 @@ function SessionList() {
     })
   }
 
-  const clearProjects = () => setActiveProjects(new Set())
+  const clearProjects = () => setActiveProjects(new Set<string>())
 
   return (
     <aside class="w-80 border-r overflow-y-auto bg-gray-50 dark:bg-gray-900 flex flex-col">

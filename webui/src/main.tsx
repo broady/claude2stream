@@ -489,6 +489,12 @@ function SessionPage() {
   const [isAttachedToBottom, setIsAttachedToBottom] = createSignal(true)
   const messages = createMemo(() => getMessagesForSession(sessionId()))
   const [copyFeedback, setCopyFeedback] = createSignal<"idle" | "copied">("idle")
+  const [messageQuery, setMessageQuery] = createSignal("")
+  const [showUser, setShowUser] = createSignal(true)
+  const [showAssistant, setShowAssistant] = createSignal(true)
+  const [showTools, setShowTools] = createSignal(true)
+  const [showThinking, setShowThinking] = createSignal(true)
+  const [errorsOnly, setErrorsOnly] = createSignal(false)
 
   // Check if message is a tool result (not human-initiated)
   function isToolResult(msg: ConversationMessage): boolean {
@@ -627,20 +633,67 @@ function SessionPage() {
     return msg.message.content
   }
 
+  function blockToText(block: ContentBlock): string {
+    if (block.type === "text") return block.text ?? ""
+    if (block.type === "thinking") return block.thinking ?? ""
+    if (block.type === "tool_use") {
+      const input = block.input ? JSON.stringify(block.input, null, 2) : ""
+      return `${block.name ?? ""}\n${input}`
+    }
+    if (block.type === "tool_result") {
+      const c = block.content
+      if (!c) return ""
+      if (typeof c === "string") return c
+      if (Array.isArray(c)) {
+        return c.map((item: { type?: string; text?: string }) => item.text || "").join("\n")
+      }
+      return String(c)
+    }
+    return ""
+  }
+
+  function getVisibleBlocks(msg: ConversationMessage): ContentBlock[] {
+    const blocks = getContentBlocks(msg)
+    return blocks.filter((block) => {
+      if (block.type === "thinking") return showThinking()
+      if (block.type === "tool_use" || block.type === "tool_result") return showTools()
+      return true
+    })
+  }
+
+  const filteredMessages = createMemo(() => {
+    const query = messageQuery().trim().toLowerCase()
+    return messages().filter((msg) => {
+      if (msg.type === "user" && !showUser()) return false
+      if (msg.type === "assistant" && !showAssistant()) return false
+
+      const allBlocks = getContentBlocks(msg)
+      if (errorsOnly()) {
+        const hasError = allBlocks.some((block) => block.type === "tool_result" && block.is_error)
+        if (!hasError) return false
+      }
+
+      const visibleBlocks = getVisibleBlocks(msg)
+      if (visibleBlocks.length === 0) return false
+
+      if (!query) return true
+      const text = visibleBlocks.map(blockToText).join("\n").toLowerCase()
+      return text.includes(query)
+    })
+  })
+
   function handleScrollToBottom() {
     scrollToBottom()
     setIsAttachedToBottom(true)
   }
 
   // Check if message has actual text content (not just tool/thinking blocks)
-  function hasTextContent(msg: ConversationMessage): boolean {
-    const blocks = getContentBlocks(msg)
+  function hasTextContent(blocks: ContentBlock[]): boolean {
     return blocks.some(b => b.type === "text" && b.text?.trim())
   }
 
   // Check if message only has tool-related blocks
-  function isToolOnlyMessage(msg: ConversationMessage): boolean {
-    const blocks = getContentBlocks(msg)
+  function isToolOnlyBlocks(blocks: ContentBlock[]): boolean {
     return blocks.length > 0 && blocks.every(b =>
       b.type === "tool_use" || b.type === "tool_result" || b.type === "thinking"
     )
@@ -683,32 +736,96 @@ function SessionPage() {
             </button>
           </div>
         </div>
+        <div class="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            value={messageQuery()}
+            onInput={(e) => setMessageQuery(e.currentTarget.value)}
+            placeholder="Filter messages"
+            class="min-w-[160px] flex-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+          />
+          <button
+            onClick={() => setShowUser(!showUser())}
+            class={`text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border ${
+              showUser()
+                ? "bg-blue-50 border-blue-200 text-blue-700"
+                : "bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            user
+          </button>
+          <button
+            onClick={() => setShowAssistant(!showAssistant())}
+            class={`text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border ${
+              showAssistant()
+                ? "bg-purple-50 border-purple-200 text-purple-700"
+                : "bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            assistant
+          </button>
+          <button
+            onClick={() => setShowTools(!showTools())}
+            class={`text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border ${
+              showTools()
+                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                : "bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            tools
+          </button>
+          <button
+            onClick={() => setShowThinking(!showThinking())}
+            class={`text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border ${
+              showThinking()
+                ? "bg-amber-50 border-amber-200 text-amber-700"
+                : "bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            thinking
+          </button>
+          <button
+            onClick={() => setErrorsOnly(!errorsOnly())}
+            class={`text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border ${
+              errorsOnly()
+                ? "bg-rose-50 border-rose-200 text-rose-700"
+                : "bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            errors
+          </button>
+          <span class="text-[10px] text-gray-400 ml-auto">{filteredMessages().length} shown</span>
+        </div>
       </div>
       <main ref={scrollContainer} onScroll={handleScroll} class="flex-1 overflow-y-auto p-2 space-y-1 scroll-area">
-        <For each={messages()}>
-          {(msg) => (
-            <Show when={msg.type === "user" || msg.type === "assistant"}>
-              <Show
-                when={!isToolOnlyMessage(msg)}
-                fallback={
-                  <div class="px-2">
-                    <For each={getContentBlocks(msg)}>
+        <For each={filteredMessages()}>
+          {(msg) => {
+            const visibleBlocks = getVisibleBlocks(msg)
+            const toolOnly = isToolOnlyBlocks(visibleBlocks)
+
+            return (
+              <Show when={msg.type === "user" || msg.type === "assistant"}>
+                <Show
+                  when={!toolOnly}
+                  fallback={
+                    <div class="px-2">
+                      <For each={visibleBlocks}>
+                        {(block) => <ContentBlockRenderer block={block} />}
+                      </For>
+                    </div>
+                  }
+                >
+                  <div class={`p-3 rounded ${msg.type === "user" ? "bg-blue-50 dark:bg-blue-900/30 ml-12" : "bg-gray-50 dark:bg-gray-800"}`}>
+                    <Show when={hasTextContent(visibleBlocks)}>
+                      <div class="text-xs font-medium text-gray-400 dark:text-gray-500 mb-1 uppercase">{msg.type}</div>
+                    </Show>
+                    <For each={visibleBlocks}>
                       {(block) => <ContentBlockRenderer block={block} />}
                     </For>
                   </div>
-                }
-              >
-                <div class={`p-3 rounded ${msg.type === "user" ? "bg-blue-50 dark:bg-blue-900/30 ml-12" : "bg-gray-50 dark:bg-gray-800"}`}>
-                  <Show when={hasTextContent(msg)}>
-                    <div class="text-xs font-medium text-gray-400 dark:text-gray-500 mb-1 uppercase">{msg.type}</div>
-                  </Show>
-                  <For each={getContentBlocks(msg)}>
-                    {(block) => <ContentBlockRenderer block={block} />}
-                  </For>
-                </div>
+                </Show>
               </Show>
-            </Show>
-          )}
+            )
+          }}
         </For>
       </main>
       <Show when={!isAttachedToBottom()}>

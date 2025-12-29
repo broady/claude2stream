@@ -27,3 +27,42 @@ html {
 body {
   @apply bg-gray-50 text-gray-950 dark:bg-gray-900 dark:text-gray-200;
 }
+
+:root {
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-thumb-hover: #94a3b8;
+  --scrollbar-track: transparent;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --scrollbar-thumb: #475569;
+    --scrollbar-thumb-hover: #64748b;
+    --scrollbar-track: transparent;
+  }
+}
+
+.scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+.scroll-area::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scroll-area::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+.scroll-area::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.scroll-area::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}

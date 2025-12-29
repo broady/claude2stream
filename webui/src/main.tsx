@@ -82,17 +82,17 @@ function ThinkingBlock(props: { block: ContentBlock }) {
   const preview = () => thinking().slice(0, 60).replace(/\n/g, " ") + (thinking().length > 60 ? "..." : "")
 
   return (
-    <div class="border-l-2 border-gray-300 pl-2 py-0.5 my-0.5 text-xs">
+    <div class="border-l-2 border-gray-300 dark:border-gray-700 pl-2 py-0.5 my-0.5 text-xs">
       <button
-        class="flex items-center gap-2 hover:bg-gray-100 rounded px-1 -ml-1 w-full text-left"
+        class="flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-1 -ml-1 w-full text-left"
         onClick={() => setExpanded(!expanded())}
       >
-        <span class="text-gray-400 italic">thinking</span>
-        <span class="text-gray-400 truncate flex-1">{preview()}</span>
-        <span class="text-gray-300">{expanded() ? "▼" : "▶"}</span>
+        <span class="text-gray-400 dark:text-gray-400 italic">thinking</span>
+        <span class="text-gray-400 dark:text-gray-400 truncate flex-1">{preview()}</span>
+        <span class="text-gray-300 dark:text-gray-500">{expanded() ? "▼" : "▶"}</span>
       </button>
       <Show when={expanded()}>
-        <pre class="text-xs text-gray-600 bg-gray-50 rounded p-2 mt-1 whitespace-pre-wrap">{thinking()}</pre>
+        <pre class="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 rounded p-2 mt-1 whitespace-pre-wrap">{thinking()}</pre>
       </Show>
     </div>
   )
@@ -105,19 +105,19 @@ function ToolUseBlock(props: { block: ContentBlock }) {
   const preview = () => inputStr().slice(0, 60).replace(/\n/g, " ") + (inputStr().length > 60 ? "..." : "")
 
   return (
-    <div class="border-l-2 border-purple-300 pl-2 py-0.5 my-0.5 text-xs">
+    <div class="border-l-2 border-purple-300 dark:border-purple-500 pl-2 py-0.5 my-0.5 text-xs">
       <button
-        class="flex items-center gap-2 hover:bg-purple-50 rounded px-1 -ml-1 w-full text-left"
+        class="flex items-center gap-2 hover:bg-purple-50 dark:hover:bg-purple-900/30 rounded px-1 -ml-1 w-full text-left"
         onClick={() => hasInput() && setExpanded(!expanded())}
       >
-        <span class="text-purple-600 font-mono font-medium">{props.block.name}</span>
+        <span class="text-purple-600 dark:text-purple-300 font-mono font-medium">{props.block.name}</span>
         <Show when={hasInput()}>
-          <span class="text-gray-400 truncate flex-1">{preview()}</span>
-          <span class="text-gray-300">{expanded() ? "▼" : "▶"}</span>
+          <span class="text-gray-400 dark:text-gray-400 truncate flex-1">{preview()}</span>
+          <span class="text-gray-300 dark:text-gray-500">{expanded() ? "▼" : "▶"}</span>
         </Show>
       </button>
       <Show when={expanded() && hasInput()}>
-        <pre class="text-xs bg-purple-50 rounded p-2 mt-1 overflow-x-auto whitespace-pre-wrap break-all">
+        <pre class="text-xs bg-purple-50 dark:bg-purple-900/30 rounded p-2 mt-1 overflow-x-auto whitespace-pre-wrap break-all">
           {inputStr()}
         </pre>
       </Show>
@@ -142,21 +142,21 @@ function ToolResultBlock(props: { block: ContentBlock }) {
   const preview = () => content().slice(0, 60).replace(/\n/g, " ") + (content().length > 60 ? "..." : "")
 
   return (
-    <div class={`border-l-2 pl-2 py-0.5 my-0.5 text-xs ${isError() ? "border-red-300" : "border-green-300"}`}>
+    <div class={`border-l-2 pl-2 py-0.5 my-0.5 text-xs ${isError() ? "border-red-300 dark:border-red-500" : "border-green-300 dark:border-green-500"}`}>
       <button
-        class={`flex items-center gap-2 rounded px-1 -ml-1 w-full text-left ${isError() ? "hover:bg-red-50" : "hover:bg-green-50"}`}
+        class={`flex items-center gap-2 rounded px-1 -ml-1 w-full text-left ${isError() ? "hover:bg-red-50 dark:hover:bg-red-900/30" : "hover:bg-green-50 dark:hover:bg-green-900/30"}`}
         onClick={() => hasContent() && setExpanded(!expanded())}
       >
-        <span class={`font-medium ${isError() ? "text-red-500" : "text-green-500"}`}>
+        <span class={`font-medium ${isError() ? "text-red-500 dark:text-red-400" : "text-green-500 dark:text-green-400"}`}>
           {isError() ? "err" : "ok"}
         </span>
         <Show when={hasContent()}>
-          <span class="text-gray-400 truncate flex-1">{preview()}</span>
-          <span class="text-gray-300">{expanded() ? "▼" : "▶"}</span>
+          <span class="text-gray-400 dark:text-gray-400 truncate flex-1">{preview()}</span>
+          <span class="text-gray-300 dark:text-gray-500">{expanded() ? "▼" : "▶"}</span>
         </Show>
       </button>
       <Show when={expanded() && hasContent()}>
-        <pre class={`text-xs rounded p-2 mt-1 overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto ${isError() ? "bg-red-50" : "bg-green-50"}`}>
+        <pre class={`text-xs rounded p-2 mt-1 overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto ${isError() ? "bg-red-50 dark:bg-red-900/30" : "bg-green-50 dark:bg-green-900/30"}`}>
           {content().slice(0, 2000)}{content().length > 2000 ? "..." : ""}
         </pre>
       </Show>
@@ -337,22 +337,22 @@ function SessionList() {
   return (
     <aside class="w-80 border-r overflow-y-auto bg-gray-50 dark:bg-gray-900 flex flex-col">
       <div class="p-2 border-b bg-white dark:bg-gray-800 sticky top-0">
-        <h2 class="font-medium text-sm text-gray-600">Recent Sessions</h2>
+        <h2 class="font-medium text-sm text-gray-600 dark:text-gray-300">Recent Sessions</h2>
       </div>
-      <div class="divide-y flex-1 overflow-y-auto">
+      <div class="divide-y dark:divide-gray-800 flex-1 overflow-y-auto scroll-area">
         <For each={sessions()}>
           {(session) => (
             <button
-              class={`w-full text-left p-3 hover:bg-gray-100 transition-colors ${
-                params()?.sessionId === session.sessionId ? "bg-blue-50 border-l-2 border-blue-500" : ""
+              class={`w-full text-left p-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors ${
+                params()?.sessionId === session.sessionId ? "bg-blue-50 border-l-2 border-blue-500 dark:bg-blue-900/30 dark:border-blue-400" : ""
               }`}
               onClick={() => navigate({ to: "/$sessionId", params: { sessionId: session.sessionId } })}
             >
               <div class="flex items-center gap-2 mb-1">
                 <Show when={folderName(session.project)}>
-                  <span class="text-xs px-1.5 py-0.5 bg-gray-200 text-gray-600 rounded font-mono">{folderName(session.project)}</span>
+                  <span class="text-xs px-1.5 py-0.5 bg-gray-200 text-gray-600 dark:bg-gray-800 dark:text-gray-300 rounded font-mono">{folderName(session.project)}</span>
                 </Show>
-                <span class="text-xs text-gray-400 ml-auto">{formatRelativeTime(session.timestamp)}</span>
+                <span class="text-xs text-gray-400 dark:text-gray-500 ml-auto">{formatRelativeTime(session.timestamp)}</span>
               </div>
               <div class="text-sm truncate">{truncate(session.display, 60)}</div>
             </button>
@@ -365,7 +365,7 @@ function SessionList() {
 
 function IndexPage() {
   return (
-    <main class="flex-1 flex items-center justify-center text-gray-400">
+    <main class="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-500">
       Select a session to view
     </main>
   )
@@ -549,20 +549,20 @@ function SessionPage() {
   return (
     <div class="flex-1 relative overflow-hidden flex flex-col">
       <div class="px-3 py-2 border-b bg-white dark:bg-gray-800 text-xs">
-        <div class="font-mono text-gray-500 truncate">{sessionId()}</div>
+        <div class="font-mono text-gray-500 dark:text-gray-400 truncate">{sessionId()}</div>
         <div class="flex items-center gap-3 mt-1">
           <Show when={shortModel()}>
-            <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">{shortModel()}</span>
+            <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 rounded">{shortModel()}</span>
           </Show>
           <Show when={stats().humanCount > 0 || stats().assistantCount > 0}>
-            <span class="text-gray-400">{stats().humanCount} human, {stats().assistantCount} assistant</span>
+            <span class="text-gray-400 dark:text-gray-500">{stats().humanCount} human, {stats().assistantCount} assistant</span>
           </Show>
           <Show when={stats().contextTokens > 0}>
-            <span class="text-gray-400">{formatTokens(stats().contextTokens)} ctx</span>
+            <span class="text-gray-400 dark:text-gray-500">{formatTokens(stats().contextTokens)} ctx</span>
           </Show>
         </div>
       </div>
-      <main ref={scrollContainer} onScroll={handleScroll} class="flex-1 overflow-y-auto p-2 space-y-1">
+      <main ref={scrollContainer} onScroll={handleScroll} class="flex-1 overflow-y-auto p-2 space-y-1 scroll-area">
         <For each={messages()}>
           {(msg) => (
             <Show when={msg.type === "user" || msg.type === "assistant"}>
@@ -576,9 +576,9 @@ function SessionPage() {
                   </div>
                 }
               >
-                <div class={`p-3 rounded ${msg.type === "user" ? "bg-blue-50 ml-12" : "bg-gray-50"}`}>
+                <div class={`p-3 rounded ${msg.type === "user" ? "bg-blue-50 dark:bg-blue-900/30 ml-12" : "bg-gray-50 dark:bg-gray-800"}`}>
                   <Show when={hasTextContent(msg)}>
-                    <div class="text-xs font-medium text-gray-400 mb-1 uppercase">{msg.type}</div>
+                    <div class="text-xs font-medium text-gray-400 dark:text-gray-500 mb-1 uppercase">{msg.type}</div>
                   </Show>
                   <For each={getContentBlocks(msg)}>
                     {(block) => <ContentBlockRenderer block={block} />}
@@ -592,7 +592,7 @@ function SessionPage() {
       <Show when={!isAttachedToBottom()}>
         <button
           onClick={handleScrollToBottom}
-          class="absolute bottom-4 right-6 bg-gray-800 text-white px-3 py-2 rounded-full shadow-lg hover:bg-gray-700 transition-colors flex items-center gap-2 text-sm"
+          class="absolute bottom-4 right-6 bg-gray-800 text-white dark:bg-gray-700 dark:text-gray-100 px-3 py-2 rounded-full shadow-lg hover:bg-gray-700 dark:hover:bg-gray-600 transition-colors flex items-center gap-2 text-sm"
         >
           <span>↓</span>
           <span>Latest</span>

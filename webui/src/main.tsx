@@ -2,6 +2,7 @@ import { render } from "solid-js/web"
 import { createSignal, createEffect, createMemo, For, Show, Switch, Match, onMount, onCleanup } from "solid-js"
 import { RouterProvider, createRouter, createRoute, createRootRoute, Outlet, useNavigate, useParams } from "@tanstack/solid-router"
 import { stream, type StreamResponse } from "@durable-streams/client"
+import { calculateCostForUsageTotals, type UsageTotals } from "./pricing"
 import "./styles.css"
 
 // In prod: served from same origin. In dev: Vite proxies to Go backend
@@ -44,6 +45,14 @@ interface TokenUsage {
   cache_read_input_tokens?: number
 }
 
+interface SessionTotals {
+  inputTokens: number
+  outputTokens: number
+  cacheCreationTokens: number
+  cacheReadTokens: number
+  totalCost: number
+}
+
 interface ConversationMessage {
   id: string
   type: string
@@ -72,6 +81,24 @@ function formatToolInput(input: Record<string, unknown>): string {
   return JSON.stringify(input, null, 2)
 }
 
+async function copyToClipboard(text: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  if (typeof document === "undefined") return
+  const textarea = document.createElement("textarea")
+  textarea.value = text
+  textarea.setAttribute("readonly", "true")
+  textarea.style.position = "absolute"
+  textarea.style.left = "-9999px"
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand("copy")
+  document.body.removeChild(textarea)
+}
+
 // ============================================================================
 // Block Components
 // ============================================================================
@@ -82,17 +109,17 @@ function ThinkingBlock(props: { block: ContentBlock }) {
   const preview = () => thinking().slice(0, 60).replace(/\n/g, " ") + (thinking().length > 60 ? "..." : "")
 
   return (
-    <div class="border-l-2 border-gray-300 pl-2 py-0.5 my-0.5 text-xs">
+    <div class="border-l-2 border-gray-300 dark:border-gray-700 pl-2 py-0.5 my-0.5 text-xs">
       <button
-        class="flex items-center gap-2 hover:bg-gray-100 rounded px-1 -ml-1 w-full text-left"
+        class="flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-1 -ml-1 w-full text-left"
         onClick={() => setExpanded(!expanded())}
       >
-        <span class="text-gray-400 italic">thinking</span>
-        <span class="text-gray-400 truncate flex-1">{preview()}</span>
-        <span class="text-gray-300">{expanded() ? "▼" : "▶"}</span>
+        <span class="text-gray-400 dark:text-gray-400 italic">thinking</span>
+        <span class="text-gray-400 dark:text-gray-400 truncate flex-1">{preview()}</span>
+        <span class="text-gray-300 dark:text-gray-500">{expanded() ? "▼" : "▶"}</span>
       </button>
       <Show when={expanded()}>
-        <pre class="text-xs text-gray-600 bg-gray-50 rounded p-2 mt-1 whitespace-pre-wrap">{thinking()}</pre>
+        <pre class="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 rounded p-2 mt-1 whitespace-pre-wrap">{thinking()}</pre>
       </Show>
     </div>
   )
@@ -105,19 +132,19 @@ function ToolUseBlock(props: { block: ContentBlock }) {
   const preview = () => inputStr().slice(0, 60).replace(/\n/g, " ") + (inputStr().length > 60 ? "..." : "")
 
   return (
-    <div class="border-l-2 border-purple-300 pl-2 py-0.5 my-0.5 text-xs">
+    <div class="border-l-2 border-purple-300 dark:border-purple-500 pl-2 py-0.5 my-0.5 text-xs">
       <button
-        class="flex items-center gap-2 hover:bg-purple-50 rounded px-1 -ml-1 w-full text-left"
+        class="flex items-center gap-2 hover:bg-purple-50 dark:hover:bg-purple-900/30 rounded px-1 -ml-1 w-full text-left"
         onClick={() => hasInput() && setExpanded(!expanded())}
       >
-        <span class="text-purple-600 font-mono font-medium">{props.block.name}</span>
+        <span class="text-purple-600 dark:text-purple-300 font-mono font-medium">{props.block.name}</span>
         <Show when={hasInput()}>
-          <span class="text-gray-400 truncate flex-1">{preview()}</span>
-          <span class="text-gray-300">{expanded() ? "▼" : "▶"}</span>
+          <span class="text-gray-400 dark:text-gray-400 truncate flex-1">{preview()}</span>
+          <span class="text-gray-300 dark:text-gray-500">{expanded() ? "▼" : "▶"}</span>
         </Show>
       </button>
       <Show when={expanded() && hasInput()}>
-        <pre class="text-xs bg-purple-50 rounded p-2 mt-1 overflow-x-auto whitespace-pre-wrap break-all">
+        <pre class="text-xs bg-purple-50 dark:bg-purple-900/30 rounded p-2 mt-1 overflow-x-auto whitespace-pre-wrap break-all">
           {inputStr()}
         </pre>
       </Show>
@@ -142,21 +169,21 @@ function ToolResultBlock(props: { block: ContentBlock }) {
   const preview = () => content().slice(0, 60).replace(/\n/g, " ") + (content().length > 60 ? "..." : "")
 
   return (
-    <div class={`border-l-2 pl-2 py-0.5 my-0.5 text-xs ${isError() ? "border-red-300" : "border-green-300"}`}>
+    <div class={`border-l-2 pl-2 py-0.5 my-0.5 text-xs ${isError() ? "border-red-300 dark:border-red-500" : "border-green-300 dark:border-green-500"}`}>
       <button
-        class={`flex items-center gap-2 rounded px-1 -ml-1 w-full text-left ${isError() ? "hover:bg-red-50" : "hover:bg-green-50"}`}
+        class={`flex items-center gap-2 rounded px-1 -ml-1 w-full text-left ${isError() ? "hover:bg-red-50 dark:hover:bg-red-900/30" : "hover:bg-green-50 dark:hover:bg-green-900/30"}`}
         onClick={() => hasContent() && setExpanded(!expanded())}
       >
-        <span class={`font-medium ${isError() ? "text-red-500" : "text-green-500"}`}>
+        <span class={`font-medium ${isError() ? "text-red-500 dark:text-red-400" : "text-green-500 dark:text-green-400"}`}>
           {isError() ? "err" : "ok"}
         </span>
         <Show when={hasContent()}>
-          <span class="text-gray-400 truncate flex-1">{preview()}</span>
-          <span class="text-gray-300">{expanded() ? "▼" : "▶"}</span>
+          <span class="text-gray-400 dark:text-gray-400 truncate flex-1">{preview()}</span>
+          <span class="text-gray-300 dark:text-gray-500">{expanded() ? "▼" : "▶"}</span>
         </Show>
       </button>
       <Show when={expanded() && hasContent()}>
-        <pre class={`text-xs rounded p-2 mt-1 overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto ${isError() ? "bg-red-50" : "bg-green-50"}`}>
+        <pre class={`text-xs rounded p-2 mt-1 overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto ${isError() ? "bg-red-50 dark:bg-red-900/30" : "bg-green-50 dark:bg-green-900/30"}`}>
           {content().slice(0, 2000)}{content().length > 2000 ? "..." : ""}
         </pre>
       </Show>
@@ -189,15 +216,28 @@ function ContentBlockRenderer(props: { block: ContentBlock }) {
 
 const [sessionMap, setSessionMap] = createSignal<Map<string, Session>>(new Map())
 const [messageStore, setMessageStore] = createSignal<Map<string, ConversationMessage[]>>(new Map())
+const [sessionTotalsMap, setSessionTotalsMap] = createSignal<Map<string, SessionTotals>>(new Map())
 
 function getMessagesForSession(sessionId: string): ConversationMessage[] {
   return messageStore().get(sessionId) ?? []
+}
+
+function getSessionTotals(sessionId: string): SessionTotals | undefined {
+  return sessionTotalsMap().get(sessionId)
 }
 
 function setMessagesForSession(sessionId: string, messages: ConversationMessage[]) {
   setMessageStore(prev => {
     const updated = new Map(prev)
     updated.set(sessionId, messages)
+    return updated
+  })
+}
+
+function setSessionTotals(sessionId: string, totals: SessionTotals) {
+  setSessionTotalsMap(prev => {
+    const updated = new Map(prev)
+    updated.set(sessionId, totals)
     return updated
   })
 }
@@ -257,6 +297,8 @@ function SessionList() {
   const params = useParams({ strict: false })
 
   const [connectionStatus, setConnectionStatus] = createSignal<"connecting" | "connected" | "error">("connecting")
+  const [searchQuery, setSearchQuery] = createSignal("")
+  const [activeProjects, setActiveProjects] = createSignal<Set<string>>(new Set())
   let streamResponse: StreamResponse | null = null
   let abortController: AbortController | null = null
 
@@ -334,27 +376,114 @@ function SessionList() {
   const folderName = (project?: string) => project?.split("/").pop() || ""
   const truncate = (s: string, len: number) => s.length <= len ? s : s.slice(0, len) + "..."
 
+  const projectGroups = createMemo(() => {
+    const counts = new Map<string, number>()
+    for (const session of sessions()) {
+      const name = folderName(session.project) || "unknown"
+      counts.set(name, (counts.get(name) || 0) + 1)
+    }
+    return [...counts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  })
+
+  const filteredSessions = createMemo(() => {
+    const query = searchQuery().trim().toLowerCase()
+    const projectFilter = activeProjects()
+    return sessions().filter((session) => {
+      const project = folderName(session.project)
+      const matchesProject = projectFilter.size === 0 || projectFilter.has(project || "unknown")
+      if (!matchesProject) return false
+
+      if (!query) return true
+      return (
+        session.display.toLowerCase().includes(query) ||
+        (session.project?.toLowerCase().includes(query) ?? false) ||
+        session.sessionId.toLowerCase().includes(query)
+      )
+    })
+  })
+
+  const toggleProject = (project: string) => {
+    setActiveProjects((prev) => {
+      const next = new Set(prev)
+      if (next.has(project)) {
+        next.delete(project)
+      } else {
+        next.add(project)
+      }
+      return next
+    })
+  }
+
+  const clearProjects = () => setActiveProjects(new Set<string>())
+
   return (
     <aside class="w-80 border-r overflow-y-auto bg-gray-50 dark:bg-gray-900 flex flex-col">
-      <div class="p-2 border-b bg-white dark:bg-gray-800 sticky top-0">
-        <h2 class="font-medium text-sm text-gray-600">Recent Sessions</h2>
+      <div class="p-2 border-b bg-white dark:bg-gray-800 sticky top-0 space-y-2">
+        <div class="flex items-center justify-between">
+          <h2 class="font-medium text-sm text-gray-600 dark:text-gray-300">Recent Sessions</h2>
+          <span class="text-xs text-gray-400 dark:text-gray-500">{filteredSessions().length}</span>
+        </div>
+        <input
+          value={searchQuery()}
+          onInput={(e) => setSearchQuery(e.currentTarget.value)}
+          placeholder="Search sessions"
+          class="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 text-xs text-gray-800 dark:text-gray-200 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800"
+        />
+        <div class="flex flex-wrap gap-1">
+          <button
+            class={`text-[10px] uppercase tracking-wide rounded-full px-2 py-0.5 border ${
+              activeProjects().size === 0
+                ? "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-200"
+                : "bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+            }`}
+            onClick={clearProjects}
+          >
+            all
+          </button>
+          <For each={projectGroups()}>
+            {(project) => (
+              <button
+                class={`text-[10px] rounded-full px-2 py-0.5 border flex items-center gap-1 ${
+                  activeProjects().has(project.name)
+                    ? "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-200"
+                    : "bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+                }`}
+                onClick={() => toggleProject(project.name)}
+                title={project.name}
+              >
+                <span class="truncate max-w-[110px]">{project.name}</span>
+                <span class="text-[9px] opacity-70">{project.count}</span>
+              </button>
+            )}
+          </For>
+        </div>
       </div>
-      <div class="divide-y flex-1 overflow-y-auto">
-        <For each={sessions()}>
+      <div class="divide-y dark:divide-gray-800 flex-1 overflow-y-auto scroll-area">
+        <For each={filteredSessions()}>
           {(session) => (
             <button
-              class={`w-full text-left p-3 hover:bg-gray-100 transition-colors ${
-                params()?.sessionId === session.sessionId ? "bg-blue-50 border-l-2 border-blue-500" : ""
+              class={`w-full text-left p-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors ${
+                params()?.sessionId === session.sessionId ? "bg-blue-50 border-l-2 border-blue-500 dark:bg-blue-900/30 dark:border-blue-400" : ""
               }`}
               onClick={() => navigate({ to: "/$sessionId", params: { sessionId: session.sessionId } })}
             >
               <div class="flex items-center gap-2 mb-1">
                 <Show when={folderName(session.project)}>
-                  <span class="text-xs px-1.5 py-0.5 bg-gray-200 text-gray-600 rounded font-mono">{folderName(session.project)}</span>
+                  <span class="text-xs px-1.5 py-0.5 bg-gray-200 text-gray-600 dark:bg-gray-800 dark:text-gray-300 rounded font-mono">{folderName(session.project)}</span>
                 </Show>
-                <span class="text-xs text-gray-400 ml-auto">{formatRelativeTime(session.timestamp)}</span>
+                <span class="text-xs text-gray-400 dark:text-gray-500 ml-auto">{formatRelativeTime(session.timestamp)}</span>
               </div>
               <div class="text-sm truncate">{truncate(session.display, 60)}</div>
+              <Show when={getSessionTotals(session.sessionId)}>
+                {(totals) => (
+                  <div class="text-xs text-gray-400 mt-1 flex items-center gap-2">
+                    <span>{formatTokens(sumSessionTokens(totals()))} tokens</span>
+                    <span>{formatUsd(totals().totalCost)}</span>
+                  </div>
+                )}
+              </Show>
             </button>
           )}
         </For>
@@ -365,7 +494,7 @@ function SessionList() {
 
 function IndexPage() {
   return (
-    <main class="flex-1 flex items-center justify-center text-gray-400">
+    <main class="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-500">
       Select a session to view
     </main>
   )
@@ -375,6 +504,16 @@ function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M"
   if (n >= 1_000) return (n / 1_000).toFixed(1) + "k"
   return String(n)
+}
+
+function formatUsd(amount: number): string {
+  if (!amount || amount <= 0) return "$0.00"
+  if (amount < 0.01) return `$${amount.toFixed(4)}`
+  return `$${amount.toFixed(2)}`
+}
+
+function sumSessionTokens(totals: SessionTotals): number {
+  return totals.inputTokens + totals.outputTokens + totals.cacheCreationTokens + totals.cacheReadTokens
 }
 
 function SessionPage() {
@@ -389,6 +528,14 @@ function SessionPage() {
 
   const [isAttachedToBottom, setIsAttachedToBottom] = createSignal(true)
   const messages = createMemo(() => getMessagesForSession(sessionId()))
+  const [copyFeedback, setCopyFeedback] = createSignal<"idle" | "copied">("idle")
+  const [messageQuery, setMessageQuery] = createSignal("")
+  const [showUser, setShowUser] = createSignal(true)
+  const [showAssistant, setShowAssistant] = createSignal(true)
+  const [showTools, setShowTools] = createSignal(true)
+  const [showThinking, setShowThinking] = createSignal(true)
+  const [errorsOnly, setErrorsOnly] = createSignal(false)
+  const [sessionTotals, setSessionTotalsLocal] = createSignal<SessionTotals | null>(null)
 
   // Check if message is a tool result (not human-initiated)
   function isToolResult(msg: ConversationMessage): boolean {
@@ -424,6 +571,77 @@ function SessionPage() {
     return { model, contextTokens, humanCount, assistantCount }
   })
 
+  createEffect(() => {
+    const msgs = messages()
+    const currentId = sessionId()
+    if (!currentId) return
+
+    const totalsByModel = new Map<string, UsageTotals>()
+    let inputTokens = 0
+    let outputTokens = 0
+    let cacheCreationTokens = 0
+    let cacheReadTokens = 0
+
+    for (const msg of msgs) {
+      const usage = msg.message?.usage
+      if (!usage) continue
+
+      inputTokens += usage.input_tokens ?? 0
+      outputTokens += usage.output_tokens ?? 0
+      cacheCreationTokens += usage.cache_creation_input_tokens ?? 0
+      cacheReadTokens += usage.cache_read_input_tokens ?? 0
+
+      const model = msg.message?.model
+      if (!model) continue
+
+      const existing = totalsByModel.get(model) ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      }
+
+      existing.inputTokens += usage.input_tokens ?? 0
+      existing.outputTokens += usage.output_tokens ?? 0
+      existing.cacheCreationTokens += usage.cache_creation_input_tokens ?? 0
+      existing.cacheReadTokens += usage.cache_read_input_tokens ?? 0
+      totalsByModel.set(model, existing)
+    }
+
+    const baseTotals: SessionTotals = {
+      inputTokens,
+      outputTokens,
+      cacheCreationTokens,
+      cacheReadTokens,
+      totalCost: 0,
+    }
+
+    if (totalsByModel.size === 0) {
+      setSessionTotalsLocal(baseTotals)
+      setSessionTotals(currentId, baseTotals)
+      return
+    }
+
+    let cancelled = false
+
+    ;(async () => {
+      const totalCost = await calculateCostForUsageTotals(totalsByModel)
+      if (cancelled) return
+
+      const totals: SessionTotals = {
+        ...baseTotals,
+        totalCost,
+      }
+
+      setSessionTotalsLocal(totals)
+      setSessionTotals(currentId, totals)
+    })()
+
+    onCleanup(() => {
+      cancelled = true
+    })
+  })
+
   const shortModel = () => {
     const m = stats().model
     if (!m) return undefined
@@ -432,6 +650,12 @@ function SessionPage() {
     const match = m.match(/claude-(\w+)-(\d+)-(\d+)/)
     if (match) return `${match[1]}-${match[2]}.${match[3]}`
     return m
+  }
+
+  const totalTokens = () => {
+    const totals = sessionTotals()
+    if (!totals) return 0
+    return totals.inputTokens + totals.outputTokens + totals.cacheCreationTokens + totals.cacheReadTokens
   }
 
   // Check if scrolled near bottom (within 100px threshold)
@@ -527,20 +751,67 @@ function SessionPage() {
     return msg.message.content
   }
 
+  function blockToText(block: ContentBlock): string {
+    if (block.type === "text") return block.text ?? ""
+    if (block.type === "thinking") return block.thinking ?? ""
+    if (block.type === "tool_use") {
+      const input = block.input ? JSON.stringify(block.input, null, 2) : ""
+      return `${block.name ?? ""}\n${input}`
+    }
+    if (block.type === "tool_result") {
+      const c = block.content
+      if (!c) return ""
+      if (typeof c === "string") return c
+      if (Array.isArray(c)) {
+        return c.map((item: { type?: string; text?: string }) => item.text || "").join("\n")
+      }
+      return String(c)
+    }
+    return ""
+  }
+
+  function getVisibleBlocks(msg: ConversationMessage): ContentBlock[] {
+    const blocks = getContentBlocks(msg)
+    return blocks.filter((block) => {
+      if (block.type === "thinking") return showThinking()
+      if (block.type === "tool_use" || block.type === "tool_result") return showTools()
+      return true
+    })
+  }
+
+  const filteredMessages = createMemo(() => {
+    const query = messageQuery().trim().toLowerCase()
+    return messages().filter((msg) => {
+      if (msg.type === "user" && !showUser()) return false
+      if (msg.type === "assistant" && !showAssistant()) return false
+
+      const allBlocks = getContentBlocks(msg)
+      if (errorsOnly()) {
+        const hasError = allBlocks.some((block) => block.type === "tool_result" && block.is_error)
+        if (!hasError) return false
+      }
+
+      const visibleBlocks = getVisibleBlocks(msg)
+      if (visibleBlocks.length === 0) return false
+
+      if (!query) return true
+      const text = visibleBlocks.map(blockToText).join("\n").toLowerCase()
+      return text.includes(query)
+    })
+  })
+
   function handleScrollToBottom() {
     scrollToBottom()
     setIsAttachedToBottom(true)
   }
 
   // Check if message has actual text content (not just tool/thinking blocks)
-  function hasTextContent(msg: ConversationMessage): boolean {
-    const blocks = getContentBlocks(msg)
+  function hasTextContent(blocks: ContentBlock[]): boolean {
     return blocks.some(b => b.type === "text" && b.text?.trim())
   }
 
   // Check if message only has tool-related blocks
-  function isToolOnlyMessage(msg: ConversationMessage): boolean {
-    const blocks = getContentBlocks(msg)
+  function isToolOnlyBlocks(blocks: ContentBlock[]): boolean {
     return blocks.length > 0 && blocks.every(b =>
       b.type === "tool_use" || b.type === "tool_result" || b.type === "thinking"
     )
@@ -549,50 +820,140 @@ function SessionPage() {
   return (
     <div class="flex-1 relative overflow-hidden flex flex-col">
       <div class="px-3 py-2 border-b bg-white dark:bg-gray-800 text-xs">
-        <div class="font-mono text-gray-500 truncate">{sessionId()}</div>
-        <div class="flex items-center gap-3 mt-1">
-          <Show when={shortModel()}>
-            <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">{shortModel()}</span>
-          </Show>
-          <Show when={stats().humanCount > 0 || stats().assistantCount > 0}>
-            <span class="text-gray-400">{stats().humanCount} human, {stats().assistantCount} assistant</span>
-          </Show>
-          <Show when={stats().contextTokens > 0}>
-            <span class="text-gray-400">{formatTokens(stats().contextTokens)} ctx</span>
-          </Show>
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <div class="font-mono text-gray-500 dark:text-gray-400 truncate">{sessionId()}</div>
+            <div class="flex items-center gap-3 mt-1">
+              <Show when={shortModel()}>
+                <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 rounded">{shortModel()}</span>
+              </Show>
+              <Show when={stats().humanCount > 0 || stats().assistantCount > 0}>
+                <span class="text-gray-400 dark:text-gray-500">{stats().humanCount} human, {stats().assistantCount} assistant</span>
+              </Show>
+              <Show when={stats().contextTokens > 0}>
+                <span class="text-gray-400 dark:text-gray-500">{formatTokens(stats().contextTokens)} ctx</span>
+              </Show>
+              <Show when={sessionTotals()}>
+                <span class="text-gray-400 dark:text-gray-500">{formatTokens(totalTokens())} tokens</span>
+                <span class="text-gray-400 dark:text-gray-500">{formatUsd(sessionTotals()!.totalCost)}</span>
+              </Show>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                await copyToClipboard(`claude -r \"${sessionId()}\"`)
+                setCopyFeedback("copied")
+                setTimeout(() => setCopyFeedback("idle"), 1600)
+              }}
+              class="text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              {copyFeedback() === "copied" ? "copied" : "copy resume"}
+            </button>
+            <button
+              onClick={() => copyToClipboard(sessionId())}
+              class="text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              copy id
+            </button>
+          </div>
+        </div>
+        <div class="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            value={messageQuery()}
+            onInput={(e) => setMessageQuery(e.currentTarget.value)}
+            placeholder="Filter messages"
+            class="min-w-[160px] flex-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+          />
+          <button
+            onClick={() => setShowUser(!showUser())}
+            class={`text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border ${
+              showUser()
+                ? "bg-blue-50 border-blue-200 text-blue-700"
+                : "bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            user
+          </button>
+          <button
+            onClick={() => setShowAssistant(!showAssistant())}
+            class={`text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border ${
+              showAssistant()
+                ? "bg-purple-50 border-purple-200 text-purple-700"
+                : "bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            assistant
+          </button>
+          <button
+            onClick={() => setShowTools(!showTools())}
+            class={`text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border ${
+              showTools()
+                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                : "bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            tools
+          </button>
+          <button
+            onClick={() => setShowThinking(!showThinking())}
+            class={`text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border ${
+              showThinking()
+                ? "bg-amber-50 border-amber-200 text-amber-700"
+                : "bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            thinking
+          </button>
+          <button
+            onClick={() => setErrorsOnly(!errorsOnly())}
+            class={`text-[10px] uppercase tracking-wide rounded-full px-2 py-1 border ${
+              errorsOnly()
+                ? "bg-rose-50 border-rose-200 text-rose-700"
+                : "bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            errors
+          </button>
+          <span class="text-[10px] text-gray-400 ml-auto">{filteredMessages().length} shown</span>
         </div>
       </div>
-      <main ref={scrollContainer} onScroll={handleScroll} class="flex-1 overflow-y-auto p-2 space-y-1">
-        <For each={messages()}>
-          {(msg) => (
-            <Show when={msg.type === "user" || msg.type === "assistant"}>
-              <Show
-                when={!isToolOnlyMessage(msg)}
-                fallback={
-                  <div class="px-2">
-                    <For each={getContentBlocks(msg)}>
+      <main ref={scrollContainer} onScroll={handleScroll} class="flex-1 overflow-y-auto p-2 space-y-1 scroll-area">
+        <For each={filteredMessages()}>
+          {(msg) => {
+            const visibleBlocks = getVisibleBlocks(msg)
+            const toolOnly = isToolOnlyBlocks(visibleBlocks)
+
+            return (
+              <Show when={msg.type === "user" || msg.type === "assistant"}>
+                <Show
+                  when={!toolOnly}
+                  fallback={
+                    <div class="px-2">
+                      <For each={visibleBlocks}>
+                        {(block) => <ContentBlockRenderer block={block} />}
+                      </For>
+                    </div>
+                  }
+                >
+                  <div class={`p-3 rounded ${msg.type === "user" ? "bg-blue-50 dark:bg-blue-900/30 ml-12" : "bg-gray-50 dark:bg-gray-800"}`}>
+                    <Show when={hasTextContent(visibleBlocks)}>
+                      <div class="text-xs font-medium text-gray-400 dark:text-gray-500 mb-1 uppercase">{msg.type}</div>
+                    </Show>
+                    <For each={visibleBlocks}>
                       {(block) => <ContentBlockRenderer block={block} />}
                     </For>
                   </div>
-                }
-              >
-                <div class={`p-3 rounded ${msg.type === "user" ? "bg-blue-50 ml-12" : "bg-gray-50"}`}>
-                  <Show when={hasTextContent(msg)}>
-                    <div class="text-xs font-medium text-gray-400 mb-1 uppercase">{msg.type}</div>
-                  </Show>
-                  <For each={getContentBlocks(msg)}>
-                    {(block) => <ContentBlockRenderer block={block} />}
-                  </For>
-                </div>
+                </Show>
               </Show>
-            </Show>
-          )}
+            )
+          }}
         </For>
       </main>
       <Show when={!isAttachedToBottom()}>
         <button
           onClick={handleScrollToBottom}
-          class="absolute bottom-4 right-6 bg-gray-800 text-white px-3 py-2 rounded-full shadow-lg hover:bg-gray-700 transition-colors flex items-center gap-2 text-sm"
+          class="absolute bottom-4 right-6 bg-gray-800 text-white dark:bg-gray-700 dark:text-gray-100 px-3 py-2 rounded-full shadow-lg hover:bg-gray-700 dark:hover:bg-gray-600 transition-colors flex items-center gap-2 text-sm"
         >
           <span>↓</span>
           <span>Latest</span>
